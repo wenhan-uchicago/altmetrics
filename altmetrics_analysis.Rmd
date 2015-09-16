@@ -1,0 +1,283 @@
+---
+title: "On the origin of citations"
+author: "Wenhan"
+date: "September 15, 2015"
+output:
+  word_document: default
+  pdf_document:
+    toc: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    highlight: espresso
+    number_sections: yes
+    self_contained: no
+    theme: cerulean
+    toc: yes
+---
+
+# Load the data
+
+## using read.delim
+
+```{r load_data}
+counts_raw <- read.delim("data/df_all.txt")
+counts_norm <- read.delim("data/df_research_norm_transform.txt")
+```
+
+# Data exploration
+
+What's the distribution of authors in all articles of our data set?
+
+```{r authro_histogram, echo=FALSE, fig.cap="Figure 1: Number of Authors per Article"}
+hist(counts_raw$authorsCount, main = "Authors per paper", xlab = "# authors")
+```
+
+
+How popular are articles on Facebook?
+
+```{r popular_histogram, fig.cap="Figure 2: Number of Facebook Shares per Article", echo=FALSE}
+hist(counts_raw$facebookShareCount, main = "Facebook Shares per paper", xlab = "# Shares")
+```
+
+
+The average number of Facebook shares per paper in the data set is `r mean(counts_raw$facebookShareCount)`.
+
+## dplyr
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+research <- filter(counts_raw, articleType == 'Research Article')
+```
+
+```{r}
+research_2006 <- filter(research, year == 2006)
+nrow(research_2006)
+```
+
+```{r}
+research_2006_fb <- filter(research, year == 2006, facebookCommentCount > 0)
+nrow(research_2006_fb)
+```
+
+```{r}
+research_2006_fb_tweet <- filter(research, year == 2006, facebookCommentCount > 0 | backtweetsCount > 0, grepl('Infectious Diseases', plosSubjectTags))
+nrow(research_2006_fb_tweet)
+```
+
+```{r}
+colnames(research)
+```
+
+```{r}
+article_info <- select(research, doi:authorsCount)
+colnames(article_info)
+```
+
+```{r}
+metrics <- select(research, contains("count"), -authorsCount, f1000Factor, wikipediaCites)
+colnames(metrics)
+```
+
+```{r}
+head(select(research, journal))
+head(select(research, 3))
+```
+
+```{r}
+slice(article_info, 1:3)
+```
+
+```{r}
+low_cite <- filter(counts_raw, year <= 2008, pdfDownloadsCount > 1000, mendeleyReadersCount > 15, wosCountThru2011 < 10)
+dim(low_cite)
+```
+
+```{r}
+# another way to do this
+another_low_cite <- counts_raw[counts_raw$year <= 2008 & counts_raw$pdfDownloadsCount > 1000 & counts_raw$mendeleyReadersCount > 15 & counts_raw$wosCountThru2011 < 10, ]
+dim(another_low_cite)
+```
+
+### Chaining commands with dplyr
+```{r}
+# pipe character %>%
+facebook_2006 <- research %>% select(contains("facebook"))
+head(facebook_2006)
+
+```
+
+```{r}
+# pipe character %>%
+research %>% select(contains("facebook")) %>% head()
+```
+
+arrange, works similar to function order
+
+```{r}
+research %>% arrange(desc(authorsCount), desc(wosCountThru2011)) %>% select(authorsCount, wosCountThru2011) %>% slice(1:10)
+```
+
+```{r}
+# chanllenge 1
+research %>% arrange(desc(wosCountThru2011)) %>% slice(1:3) %>% select(title, wosCountThru2011)
+```
+
+```{r}
+# another way to do this
+research[order(desc(research$wosCountThru2011)),]$title[1:3]
+```
+
+
+```{r}
+# chanllenge 2
+research %>% arrange(desc(authorsCount)) %>% select(authorsCount, title, journal, plosSubjectTags) %>% slice(1:3)
+```
+
+```{r}
+# another way
+research[order(desc(research$authorsCount)), c('authorsCount', 'title', 'journal', 'plosSubjectTags')][1:3,]
+
+```
+
+### summarizing with dplyr
+
+```{r}
+research <- research %>% mutate(weeksSincePublished = daysSincePublished / 7, yearsSincePublished = weeksSincePublished / 52)
+
+research %>% select(contains("Since")) %>% slice(1:10)
+```
+
+using summarize
+
+```{r}
+research %>% summarize(plos_mean = mean(plosCommentCount), plos_sd = sd(plosCommentCount), num = n())
+```
+
+```{r}
+research %>% group_by(journal, year) %>% summarize(tweets_mean = mean(backtweetsCount))
+```
+
+Create a new data frame, tweets_per_journal, that for each journal contains the total number of articles, the mean number of tweets received by articles in that journal, and the standard error of the mean (SEM) of the number of tweets. The SEM is the standard deviation divided by the square root of the sample size (i.e. the number of articles).
+
+```{r}
+tweets_per_journal <- research %>% group_by(journal) %>% summarize(num_articles = n(), mean_tweets = mean(backtweetsCount), SEM_tweets = sd(backtweetsCount) / sqrt(num_articles))
+```
+
+# ggplot2
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+p <- ggplot(data = research, mapping = aes(x = pdfDownloadsCount, y = wosCountThru2011, color = journal)) + geom_point() + geom_smooth()
+p
+```
+
+Create a scatter plot with daysSincePublished mapped to the x-axis and wosCountThru2011 mapped to the y-axis. Include a loess fit of the data. Set the transparency level (alpha) of the points to 0.5 and color the points according to the journal where the article was published. Make the loess curve red.
+
+```{r}
+g <- ggplot(data = research, aes(x = daysSincePublished, y = wosCountThru2011)) + geom_point(aes(color = journal), alpha = 0.5) + geom_smooth(color = 'red')
+g
+```
+
+### Using scales
+
+```{r}
+p <- ggplot(data = research, mapping = aes(x = log10(pdfDownloadsCount + 1), y = log10(wosCountThru2011 + 10))) + geom_point(aes(color = journal)) + geom_smooth() + scale_x_continuous(breaks = c(1, 3), labels = c(10, 1000)) + scale_y_continuous(breaks = c(1, 3), labels = c(10, 1000), limits = c(1, 3))
+p
+```
+
+different color options
+
+```{r}
+p + scale_color_grey()
+p + scale_color_manual(values = c('red', 'green', 'blue', 'orange', 'pink', 'yellow', 'purple'))
+```
+
+```{r}
+library(RColorBrewer)
+display.brewer.all(type = 'qual')
+```
+
+```{r}
+p + scale_color_brewer(palette = "Dark2", labels = 1:7, name = "PLOS") 
+
+```
+
+Update the plot to use a square root transformation instead of log10. Also color the points using the ColorBrewer palette “Accent”.
+
+```{r}
+p <- ggplot(data = research, mapping = aes(x = sqrt(pdfDownloadsCount), y = sqrt(wosCountThru2011))) + geom_point(aes(color = journal)) + geom_smooth() + scale_x_continuous(breaks = c(50, 100), labels = c(2500, 10000)) + scale_y_continuous(breaks = c(10, 20), labels = c(100, 400)) + scale_color_brewer(palette = "Accent", labels = 1:7, name = "PLOS")
+p
+```
+
+### Using facets to make subplots
+
+```{r}
+p <- ggplot(data = research, mapping = aes(x = sqrt(pdfDownloadsCount), y = sqrt(wosCountThru2011))) + geom_point(aes(color = journal)) + geom_smooth() + scale_x_continuous(breaks = c(50, 100), labels = c(2500, 10000)) + scale_y_continuous(breaks = c(10, 20), labels = c(100, 400)) + scale_color_brewer(palette = "Accent")
+
+p + facet_wrap(~journal, ncol = 2)
+```
+
+using facet_grid
+
+```{r}
+research <- mutate(research, immuno = grepl("Immunology", plosSubjectTags))
+p + facet_grid(journal~immuno)
+```
+
+### Using different geoms
+
+```{r}
+p <- ggplot(data = research, aes(x = journal, y = sqrt(wosCountThru2011))) + geom_boxplot()
+p
+```
+
+making a barplot
+
+```{r}
+tweets_per_journal <- research %>% group_by(journal) %>% summarize(num_articles = n(), mean_tweets = mean(backtweetsCount), SEM_tweets = sd(backtweetsCount) / sqrt(num_articles))
+tweets_per_journal
+```
+
+```{r}
+tweets_bar <- ggplot(tweets_per_journal, aes(x = journal, y = mean_tweets)) + geom_bar(stat = 'identity') + geom_errorbar(aes(ymin = mean_tweets - SEM_tweets, ymax = mean_tweets + SEM_tweets), width = 0.1) + geom_text(aes(label = num_articles), hjust = 0, vjust = 0)
+tweets_bar
+```
+
+Modify the dplyr code above to calculate the mean, SEM, and sample size of the number of article tweets per journal and per year. Use facet_wrap to make a separate subplot per year.
+
+```{r}
+# per journal, per year
+tweets_per_journal_per_year <- research %>% group_by(journal, year) %>% summarize(num = n(), mean = mean(backtweetsCount), sd(backtweetsCount) / sqrt(num))
+
+tweets_bar_2 <- ggplot(data = tweets_per_journal_per_year, aes(x = journal, y = mean)) + geom_bar(stat = "identity") + facet_wrap(~year, ncol = 2)
+tweets_bar_2
+```
+
+### Custimozing the plot
+
+```{r}
+tweets_bar_2 + labs(title = "Mean tweets per journal per year", x = "Journal", y = "Mean number of tweets") + theme_minimal()
+```
+
+```{r}
+tweets_bar_2 + theme_bw()
+tweets_bar_2 + theme_classic()
+```
+
+```{r}
+# applies to all plots
+theme_set(theme_bw())
+```
+
+```{r}
+tweets_bar
+```
+
